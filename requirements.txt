@@ -2,6 +2,7 @@ fastapi
 uvicorn
 pydantic
 tensorflow-cpu
+keras
 pandas
 joblib
 scikit-learn==1.6.1
