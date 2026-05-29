@@ -1,10 +1,12 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import keras
 from pydantic import BaseModel
 from typing import Optional  
 import tensorflow as tf
 import pandas as pd
 import joblib 
+import keras
 import numpy as np
 import os
 
@@ -77,15 +79,14 @@ try:
 except Exception as e:
     print(f"[ERROR CRITICAL] Gagal memuat Label Encoder! Detail: {str(e)}")
     raise RuntimeError(f"Label Encoder crash: {str(e)}")
-
 try:
-    # Registrasi ResidualBlock dimasukkan ke sini agar tidak eror deserialisasi
-    loaded_model = tf.keras.models.load_model(
+    # Registrasi ResidualBlock tetap dipertahankan, tapi diganti menggunakan keras.models.load_model
+    loaded_model = keras.models.load_model(
         MODEL_PATH, 
         compile=False,
         custom_objects={'ResidualBlock': ResidualBlock}
     )
-    print("✓ Model_multioutput_final.keras berhasil dimuat dengan Custom Layer.")
+    print("✓ Model_multioutput_final.keras berhasil dimuat dengan Custom Layer menggunakan Keras 3.")
 except Exception as e:
     print(f"[ERROR CRITICAL] Gagal memuat Model .keras! Detail: {str(e)}")
     raise RuntimeError(f"Model crash: {str(e)}")
