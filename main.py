@@ -1,12 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import keras
 from pydantic import BaseModel
-from typing import Optional  
 import tensorflow as tf
-import pandas as pd
-import joblib 
 import keras
+import pandas as pd
+import joblib
 import numpy as np
 import os
 
@@ -24,21 +22,22 @@ app.add_middleware(
 )
 
 # =========================================================
-# 1. DEFINISI CUSTOM LAYER (DIAMBIL DARI FILE TRAINING ANDA)
+# CUSTOM LAYER
 # =========================================================
-class ResidualBlock(tf.keras.layers.Layer):
+@keras.saving.register_keras_serializable(package="custom_layers")
+class ResidualBlock(keras.layers.Layer):
     def __init__(self, units, dropout_rate=0.2, **kwargs):
         super().__init__(**kwargs)
         self.units        = units
         self.dropout_rate = dropout_rate
-        self.dense1     = tf.keras.layers.Dense(units, activation='relu',
-                              kernel_regularizer=tf.keras.regularizers.l2(1e-4))
-        self.bn1        = tf.keras.layers.BatchNormalization()
-        self.dropout1   = tf.keras.layers.Dropout(dropout_rate)
-        self.dense2     = tf.keras.layers.Dense(units, activation='relu',
-                              kernel_regularizer=tf.keras.regularizers.l2(1e-4))
-        self.bn2        = tf.keras.layers.BatchNormalization()
-        self.projection = tf.keras.layers.Dense(units)
+        self.dense1     = keras.layers.Dense(units, activation='relu',
+                              kernel_regularizer=keras.regularizers.l2(1e-4))
+        self.bn1        = keras.layers.BatchNormalization()
+        self.dropout1   = keras.layers.Dropout(dropout_rate)
+        self.dense2     = keras.layers.Dense(units, activation='relu',
+                              kernel_regularizer=keras.regularizers.l2(1e-4))
+        self.bn2        = keras.layers.BatchNormalization()
+        self.projection = keras.layers.Dense(units)
 
     def call(self, inputs, training=False):
         x        = self.dense1(inputs)
@@ -47,52 +46,54 @@ class ResidualBlock(tf.keras.layers.Layer):
         x        = self.dense2(x)
         x        = self.bn2(x, training=training)
         shortcut = self.projection(inputs)
-        return tf.keras.activations.relu(x + shortcut)
+        return keras.activations.relu(x + shortcut)
 
     def get_config(self):
         config = super().get_config()
         config.update({'units': self.units, 'dropout_rate': self.dropout_rate})
         return config
 
-
-# 2. KONFIGURASI JALUR FILE (PATH) SECARA DINAMIS
+# =========================================================
+# PATH FILE
+# =========================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "model_multioutput_final.keras")
-PREPROCESSOR_PATH = os.path.join(BASE_DIR, "preprocessor_risklevel.pkl")
+MODEL_PATH       = os.path.join(BASE_DIR, "model_multioutput_final.keras")
+PREPROCESSOR_PATH  = os.path.join(BASE_DIR, "preprocessor_risklevel.pkl")
 LABEL_ENCODER_PATH = os.path.join(BASE_DIR, "label_encoder_risklevel.pkl")
 
-loaded_model = None
-preprocessor = None
+loaded_model  = None
+preprocessor  = None
 label_encoder = None
 
-# 3. PROSES MEMUAT ASET (DENGAN REGISTER CUSTOM OBJECT)
+# =========================================================
+# LOAD ASET
+# =========================================================
 try:
     preprocessor = joblib.load(PREPROCESSOR_PATH)
-    print("✓ Preprocessor_risklevel.pkl berhasil dimuat.")
+    print("✓ Preprocessor berhasil dimuat.")
 except Exception as e:
-    print(f"[ERROR CRITICAL] Gagal memuat Preprocessor! Detail: {str(e)}")
     raise RuntimeError(f"Preprocessor crash: {str(e)}")
 
 try:
     label_encoder = joblib.load(LABEL_ENCODER_PATH)
-    print("✓ Label_encoder_risklevel.pkl berhasil dimuat.")
+    print("✓ Label Encoder berhasil dimuat.")
 except Exception as e:
-    print(f"[ERROR CRITICAL] Gagal memuat Label Encoder! Detail: {str(e)}")
     raise RuntimeError(f"Label Encoder crash: {str(e)}")
+
 try:
-    # Registrasi ResidualBlock tetap dipertahankan, tapi diganti menggunakan keras.models.load_model
     loaded_model = keras.models.load_model(
-        MODEL_PATH, 
+        MODEL_PATH,
         compile=False,
         custom_objects={'ResidualBlock': ResidualBlock}
     )
-    print("✓ Model_multioutput_final.keras berhasil dimuat dengan Custom Layer menggunakan Keras 3.")
+    print("✓ Model berhasil dimuat.")
 except Exception as e:
-    print(f"[ERROR CRITICAL] Gagal memuat Model .keras! Detail: {str(e)}")
     raise RuntimeError(f"Model crash: {str(e)}")
 
 
-# 4. SKEMA DATA INPUT
+# =========================================================
+# SKEMA INPUT
+# =========================================================
 class EmployeeInput(BaseModel):
     Age: int
     Gender: str
@@ -104,9 +105,22 @@ class EmployeeInput(BaseModel):
     StressLevel: int
 
 
+# =========================================================
+# ENDPOINTS
+# =========================================================
 @app.get("/")
 def home():
     return {"message": "API Burnout Multi-Output aktif dan seluruh aset termuat sempurna!"}
+
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok",
+        "model_loaded": loaded_model is not None,
+        "preprocessor_loaded": preprocessor is not None,
+        "label_encoder_loaded": label_encoder is not None,
+    }
 
 
 @app.post("/predict")
@@ -115,34 +129,26 @@ def predict_burnout(data: EmployeeInput):
         if preprocessor is None or loaded_model is None or label_encoder is None:
             raise HTTPException(status_code=500, detail="Aset model belum termuat sempurna di server.")
 
-        # Ekstrak data input dan ubah menjadi DataFrame
         input_dict = data.model_dump()
         new_employee_data = pd.DataFrame([input_dict])
-        
-        # Transformasi data
+
         new_employee_processed = preprocessor.transform(new_employee_data)
-        
-        # Hitung prediksi model AI
+
         predictions = loaded_model.predict(new_employee_processed, verbose=0)
-        
-        # Membaca output berdasarkan format penamaan di model Anda (Dictionary / Named Output)
+
         if isinstance(predictions, dict):
             burnout_output = predictions['burnout_output']
-            risk_output = predictions['risk_output']
+            risk_output    = predictions['risk_output']
         else:
-            # Antisipasi jika tensorflow mengembalikannya dalam bentuk list sesuai urutan output-layer
             burnout_output = predictions[0]
-            risk_output = predictions[1]
-        
-        # 1. Ambil nilai probabilitas burnout
-        prediction_prob = float(burnout_output[0][0])
-        burnout_prob_percent_numeric = prediction_prob * 100  
-        
-        # 2. Ambil tingkat risiko (Risk Level) menggunakan Label Encoder
+            risk_output    = predictions[1]
+
+        prediction_prob              = float(burnout_output[0][0])
+        burnout_prob_percent_numeric = prediction_prob * 100
+
         risk_class_idx = int(np.argmax(risk_output[0]))
-        status = str(label_encoder.inverse_transform([risk_class_idx])[0])
-        
-        # Mapping Tema Warna & Saran Otomatis berdasarkan teks dari Label Encoder
+        status         = str(label_encoder.inverse_transform([risk_class_idx])[0])
+
         status_mapping = {
             "Risiko Rendah": {
                 "saran": "Karyawan dalam kondisi sehat dan seimbang. Tetap pertahankan lingkungan kerja yang positif.",
@@ -157,15 +163,14 @@ def predict_burnout(data: EmployeeInput):
                 "warna": "#E74C3C"
             }
         }
-        
+
         meta_status = status_mapping.get(status, {
             "saran": "Evaluasi kondisi kerja karyawan secara berkala untuk mencegah stres berlebih.",
             "warna": "#F39C12"
         })
         saran_umum = meta_status["saran"]
-        warna_hex = meta_status["warna"]
+        warna_hex  = meta_status["warna"]
 
-        # Logika Rekomendasi Kesehatan Kerja (Wellness)
         ai_recommendation = []
         if data.StressLevel >= 8:
             ai_recommendation.append("Lakukan mindfulness atau breathing exercise 10–15 menit setiap hari.")
@@ -215,8 +220,17 @@ def predict_burnout(data: EmployeeInput):
                 "ai_wellness_recommendations": final_recommendations
             }
         }
-        
+
     except HTTPException as http_e:
         raise http_e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Terjadi kesalahan saat inference: {str(e)}")
+
+
+# =========================================================
+# ENTRY POINT (untuk Railway)
+# =========================================================
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
