@@ -1,8 +1,8 @@
 fastapi
 uvicorn
 pydantic
-tensorflow-cpu
-keras
+tensorflow-cpu>=2.16.1
+keras>=3.0.0
 pandas
 joblib
 scikit-learn==1.6.1
